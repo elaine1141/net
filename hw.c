@@ -1,4 +1,3 @@
-  
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -8,132 +7,56 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <sys/wait.h>
 #include <netinet/in.h>
-#include <netdb.h>
 #include <arpa/inet.h>
-
-#define PORT "80" //http port
-#define BACKLOG 10 // 有多少個特定的連線佇列（pending connections queue）
-#define BUFFERSIZE 8096
-
-struct
-{
- char *ext;
- char *filetype;
-}
-extensions [] =
-{
- {"gif", "image/gif" },
- {"jpg", "image/jpeg"},
- {"jpeg","image/jpeg"},
- {"png", "image/png" },
- {"zip", "image/zip" },
- {"gz",  "image/gz"  },
- {"tar", "image/tar" },
- {"htm", "text/html" },
- {"html","text/html" },
- {"exe","text/plain" },
- {0,0}
-};
-void load (char buffer[BUFSIZ+1],int fd,int ret)   {
-    char *tmp = strstr (buffer,"filename");
-    if (tmp == 0 ) return;
-    char filename[BUFSIZ+1],data[BUFSIZ+1],location[BUFSIZ+1];
-    memset (filename,'\0',BUFSIZ);
-    memset (data,'\0',BUFSIZ);
-    memset (location,'\0',BUFSIZ);
-    int filesize;
-
-    char *a,*b;
-    a = strstr(tmp,"\"");
-    b = strstr(a+1,"\"");
-    strncpy (filename,a+1,b-a-1);
-    strcat (location,"upload/");
-    strcat (location,filename);
-
-    a = strstr(buffer,"Content-Length:");
-    filesize = atoi (a+15);
-    a = strstr(tmp,"\n");
-    b = strstr(a+1,"\n");
-    a = strstr(b+1,"\n");
-    b = strstr(a+1,"---------------------------");
-
-    int download = open(location,O_CREAT|O_WRONLY|O_TRUNC|O_SYNC,S_IRWXO|S_IRWXU|S_IRWXG);
-
-    char t[BUFSIZ+1];
-    int last_write,last_ret;
-    if (b != 0)
-    write(download,a+1,b-a-3);
-    else {
-    int start = (int )(a - &buffer[0])+1;
-    last_write = write(download,a+1,ret -start -61);
-    last_ret = ret;
-    memcpy (t,a+1+last_write,61);
-    int total=0;
-
-    total += ret;
-    while ((ret=read(fd, buffer,BUFSIZ))>0) {
-        total += ret;
-        write(download,t,61);
-        last_write = write(download,buffer,ret - 61);
-        memcpy (t,buffer+last_write,61);
-        last_ret = ret;
-        //printf ("ret:%d\n",ret);
-        if (total>=filesize-1)
-            break;
-    }
-    }
-
-    close(download);
-    printf ("UPLOAD FILE NAME :%s\n",filename);
-    return ;
-}
+#define BUFSIZE 300000
+struct {
+    char *ext;
+    char *filetype;
+} extensions [] = {
+    {"gif", "image/gif" },
+    {"jpg", "image/jpeg"},
+    {"jpeg","image/jpeg"},
+    {"png", "image/png" },
+    {"zip", "image/zip" },
+    {"gz",  "image/gz"  },
+    {"tar", "image/tar" },
+    {"htm", "text/html" },
+    {"html","text/html" },
+    {"exe","text/plain" },
+    {0,0} };
 
 void handle_socket(int fd)
 {
- int j, file_fd, buflen, len;
- long i, ret;
- char * fstr;
- static char buffer[BUFFERSIZE+1],tmp[BUFSIZ+1];
-
- ret=read(fd,buffer,BUFFERSIZE); //讀取瀏覽器需求
- if(ret==0 || ret==-1)//連線有問題，結束
- {
-  perror("read");
-  exit(3);
- }
-
- //處理字串:結尾補0,刪換行
- if(ret>0 && ret<BUFFERSIZE)
-  buffer[ret]=0;
- else
-  buffer[0]=0;
- for(i=0;i<ret;i++)
- {
-  if(buffer[i]=='\r' || buffer[i]=='\n')
-   buffer[i] = 0;
- }
-
- //判斷GET命令
- if ((strncmp(buffer,"GET ",4)==0)||(strncmp(buffer,"get ",4))==0) {
-        
-        /* 我們要把 GET /index.html HTTP/1.0 後面的 HTTP/1.0 用空字元隔開 */
-        for(i=4;i<BUFSIZ;i++) {
+    int j, file_fd, buflen, len;
+    long i, ret;
+    char * fstr;
+    static char buffer[BUFSIZE+1];
+    ret = read(fd,buffer,BUFSIZE);   /* 讀取瀏覽器要求 */
+	write(1,buffer,BUFSIZE);
+    if (ret==0||ret==-1)
+        exit(3);
+    if (ret>0&&ret<BUFSIZE)
+        buffer[ret] = '\0';
+    else
+        buffer[0] = 0;
+    if (!strncmp(buffer,"GET ",4))
+    {
+        for(i=4;i<BUFSIZE;i++) {
             if(buffer[i] == ' ') {
                 buffer[i] = 0;
                 break;
+                }
             }
-        }
-
+        for (j=0;j<i-1;j++)
+            if (buffer[j]=='.'&&buffer[j+1]=='.')
+                exit(3);
         /* 當客戶端要求根目錄時讀取 index.html */
         if (!strncmp(&buffer[0],"GET /\0",6)||!strncmp(&buffer[0],"get /\0",6) )
             strcpy(buffer,"GET /index.html\0");
-
         /* 檢查客戶端所要求的檔案格式 */
         buflen = strlen(buffer);
         fstr = (char *)0;
-
         for(i=0;extensions[i].ext!=0;i++) {
             len = strlen(extensions[i].ext);
             if(!strncmp(&buffer[buflen-len], extensions[i].ext, len)) {
@@ -141,127 +64,110 @@ void handle_socket(int fd)
                 break;
             }
         }
-
         /* 檔案格式不支援 */
         if(fstr == 0) {
             fstr = extensions[i-1].filetype;
         }
-
         /* 開啟檔案 */
         if((file_fd=open(&buffer[5],O_RDONLY))==-1)
-        {	    
-        write(fd, "Failed to open file", 19);
-        }	 
-
+            write(fd, "Failed to open file", 19);
         /* 傳回瀏覽器成功碼 200 和內容的格式 */
         sprintf(buffer,"HTTP/1.0 200 OK\r\nContent-Type: %s\r\n\r\n", fstr);
         write(fd,buffer,strlen(buffer));
-
-
         /* 讀取檔案內容輸出到客戶端瀏覽器 */
-        while ((ret=read(file_fd, buffer, BUFSIZ))>0) {
-            write(fd,buffer,ret);
+        while ((ret=read(file_fd, buffer, BUFSIZE))>0) {
+            	write(fd,buffer,ret);
         }
+    }
+    else if(!strncmp(buffer,"POST ",5)||!strncmp(buffer,"post ",5))
+    {
+        char *tmp;
+	    char filename[2048];
+		int i = 0;
+        //get filename
+        char *tmp1;
+        char body[BUFSIZE];
+		char  path[100] = "./file/";
+	    tmp1 = strstr(buffer,"filename=");
+	    strcpy(filename, tmp1+10);
+	    for(int i = 0; i < strlen(filename); i++)
+	    {
+		    if(filename[i]=='"')
+		    {
+			    filename[i] = 0;
+			    break;
+		    }
+	   }
+		strcat(path,filename);
+        tmp = strstr(tmp1, "\n\r\n");   
+       	tmp+=3;
+		FILE *fp = fopen(path,"a+");
+        while (*tmp!='\n'||*(tmp+1)!='-'||*(tmp+2)!='-')
+        {
+         
+            fprintf(fp,"%c",*tmp);
+            
+            tmp++; 
+        }
+        fclose(fp);
+        write(fd,"Uploaded",8);
+		
+    }
 
+    exit(1);
+}
+
+int main(int argc, char **argv)
+{
+    int i, pid, listenfd, socketfd;
+	int yes =1;
+    socklen_t length;
+    static struct sockaddr_in cli_addr;
+    static struct sockaddr_in serv_addr;
+    /* 使用 /tmp 當網站根目錄 */
+
+    signal(SIGCHLD, SIG_IGN);
+    if ((listenfd=socket(AF_INET, SOCK_STREAM,0))<0)
+       {
+		printf("socket error\n");
+ 		exit(3);
+	}
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons(8080);
+	if (setsockopt(listenfd ,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes)) == -1) 
+    {
+        fprintf(stderr,"setsockopt\n");
         exit(1);
     }
-    else if((strncmp(tmp,"POST ",5)==0)||((strncmp(tmp,"post ",5))==0)){
-        //POST
-        load(tmp,fd,ret);
-
-
-        file_fd = open("sucessful.html", O_RDONLY);  // index.html
-        sprintf(tmp,"HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n");
-
-        write(fd,tmp,strlen(tmp));
-
-
-        /* 讀取檔案內容輸出到客戶端瀏覽器 */
-        while ((ret=read(file_fd, buffer, BUFSIZ))>0) {
-            write(fd,buffer,ret);
+    if (bind(listenfd, (struct sockaddr *)&serv_addr,sizeof(serv_addr))<0)
+       {
+		printf("bind error\n");
+ 		exit(3);
+}
+    if (listen(listenfd,64)<0)
+	{
+		printf("listen error\n");
+        exit(3);
+	}
+    while(1) {
+        length = sizeof(cli_addr);
+        /* 等待客戶端連線 */
+        if ((socketfd = accept(listenfd, (struct sockaddr *)&cli_addr, &length))<0)
+{
+printf("accept error\n");
+            exit(3);
+}
+        /* 分出子行程處理要求 */
+        if ((pid = fork()) < 0) {
+            exit(3);
+        } else {
+            if (pid == 0) {  /* 子行程 */
+                close(listenfd);
+                handle_socket(socketfd);
+            } else { /* 父行程 */
+                close(socketfd);
+            }
         }
     }
-    else
-    exit(3);
-   
-}
-void sigchld_handler(int s)
-{
-    while(waitpid(-1,NULL,WNOHANG)>0); //wait for any child process to change state
-}
-int main(void)
-{
-
-  int sockfd; // use for listening
-  int new_fd; // new connection
-  struct addrinfo hints, *servinfo, *p;
-  struct sockaddr_storage their_addr; // 連線者的位址資訊 
-  socklen_t sin_size;
-  struct sigaction sa;
-  int yes=1;
-  char s[INET6_ADDRSTRLEN];
-  int rv;
-
-  memset(&hints, 0, sizeof hints);
-  hints.ai_family = AF_UNSPEC;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = AI_PASSIVE;
-  hints.ai_protocol=0 ;
-
-  getaddrinfo(NULL, PORT, &hints, &servinfo); //return addrinfo structures , including Internet address
-
-	
-  sockfd = socket(servinfo->ai_family, servinfo->ai_socktype,servinfo->ai_protocol); //generate socket
-
-  setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,sizeof(int)); //reuse socket
-
-  //bind socket IP, and port
-  if(bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)==-1)
-  {
-    perror("bind");
-    exit(1);
-  }	  
-
-  freeaddrinfo(servinfo); //free addrinfo
-
-  listen(sockfd, BACKLOG);
-
-
-  sa.sa_handler = sigchld_handler; // 收拾全部死掉的 processes
-  sigemptyset(&sa.sa_mask); //initialize and empty a signal set
-  sa.sa_flags = SA_RESTART; //restart the interrupted signal
-
-  sigaction(SIGCHLD, &sa, NULL); //examine and change a signal action
-
-
-  printf("connect successfully!\n");
-
-
-  while(1) // accept the request of client 
-  {	  
-    sin_size = sizeof their_addr;
-    new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-    if (new_fd == -1) 
-    {
-      perror("accept");
-      continue;
-    }
-
-
-    if (!fork()) // child process
-    {
-
-      close(sockfd); // child 不需要 listener
-      handle_socket(new_fd);
-      close(new_fd);
-
-      exit(0);
-    }
-
-    close(new_fd); // parent 不需要這個
-  }
-
-
-  return 0 ;
-
 }
